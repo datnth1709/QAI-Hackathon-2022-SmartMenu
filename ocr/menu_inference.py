@@ -13,6 +13,7 @@ import numpy as np
 import time
 import sys
 from PIL import Image, ImageDraw, ImageFont
+import imutils
 from config import  *
 
 # text detection
@@ -26,11 +27,12 @@ logger = get_logger()
 # text recognition
 from ocr.text_recognizer.vietocr.vietocr.tool.predictor import Predictor
 from ocr.text_recognizer.vietocr.vietocr.tool.config import Cfg
-# config = Cfg.load_config_from_file(BASE_DIR+ '/ocr/text_recognizer/vietocr/config/base.yml')
-config = Cfg.load_config_from_name('vgg_transformer')
-config['weights'] = BASE_DIR + "/ocr/text_recognizer/models/transformerocr.pth" #"1sWoYLzyk3MalZbNyBCf8WXsyTCEfBoxh" #
+config = Cfg.load_config_from_file(BASE_DIR+ '/ocr/text_recognizer/vietocr/config/base.yml',
+                                   BASE_DIR+ '/ocr/text_recognizer/vietocr/config/vgg-transformer.yml')
+# config = Cfg.load_config_from_name('vgg_transformer')
+config['weights'] = BASE_DIR + "/ocr/text_recognizer/models/transformerocr.pth"
 config['cnn']['pretrained'] = False
-config['device'] = 'cuda:0' #'cuda:0' #
+config['device'] = 'cuda:0'
 config['predictor']['beamsearch']= False
 recognizer = Predictor(config)
 
@@ -39,7 +41,6 @@ import math
 import difflib
 import pandas as pd
 import csv
-mapping_file = BASE_DIR + "/ocr/label-name.csv"
 font_text = ImageFont.truetype(BASE_DIR+ "/ocr/font/SVN-Arial-Regular.ttf", 20)
 
 
@@ -224,27 +225,9 @@ def write_text(image, result_text, point):
     pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw =  ImageDraw.Draw(pil_img)
     point = (point[0], int(point[1]-20))
-    draw.text(point, result_text, (255, 0, 0), font=font_text)
+    draw.text(point, result_text, (255, 255, 0), font=font_text)
     cv2_img = cv2.cvtColor(np.asarray(pil_img), cv2.COLOR_RGB2BGR)
     return cv2_img
-
-def get_all_drugnames(mapping_file):
-    df = pd.read_csv(mapping_file)
-    DrugList = df['Drug name'].tolist()
-    # LabelCells = df['label'].tolist()
-    # print(LabelCells)
-    AllDrugNames = []
-    for cell in DrugList:
-        try:
-            names = cell.split(" || ")
-            for name in names:
-                name = name.replace('"', '')
-                # print("'"+name+"'")
-                AllDrugNames.append(name)
-        except:
-            if math.isnan(cell):
-                print(cell)
-    return DrugList, AllDrugNames
 
 if __name__ == "__main__":
     args = utility.parse_args()
@@ -260,14 +243,6 @@ if __name__ == "__main__":
     # print(args)
     image_file_list = get_image_file_list(args.image_dir)
     text_detector = TextDetector(args)
-
-    DrugList, AllDrugNames = get_all_drugnames(mapping_file)
-    # print(DrugList)
-
-    header = ['PresName', 'DrugName', 'labels']
-    PresOutput = open('public_test_pres_ouput_predict.csv', 'w', encoding='UTF-8', newline='')
-    writer = csv.writer(PresOutput)
-    writer.writerow(header)
 
     for image_file in image_file_list:
         print(40*"*")
@@ -285,56 +260,28 @@ if __name__ == "__main__":
 
         img_name_pure = os.path.split(image_file)[-1]
 
+        if det_visualize:
+            img_path = os.path.join(det_out_viz_dir, "{}".format(img_name_pure))
+            src_im =utility.draw_textbox_det_img(dt_boxes, src_im)
+            logger.info("The visualized image saved in {}".format(img_path))
+
         drugname_boxes = []
         for box in dt_boxes:
             warp = crop_bbox(img, box)
-            # text = recognizer.predict(warp)
             img_pil = Image.fromarray(warp)
             text = recognizer.predict(img_pil)
-            # print("OCR Predict: ", text)
+            src_im = write_text(src_im, text, (int(box[0][0]), int(box[0][1])))
 
-            # Key information extraction by rule
-            drugnames_predict = difflib.get_close_matches(text, AllDrugNames)
-            probs = []
-            for name in drugnames_predict:
-                prob = difflib.SequenceMatcher(None, text, name).ratio()
-                probs.append(prob)
-            if drugnames_predict != []:
-                drugname = drugnames_predict[np.argmax(probs)]
-                # print("drugnames_predict: ", drugnames_predict)
-                drugnameShow = drugname + " - ID: "
-
-                labels = ""
-                ids = []
-                for index, drug in enumerate(DrugList):
-                    if drugname in drug:
-                        ids.append(index)
-                maxid = len(ids) - 1
-                for i, id in enumerate(ids):
-                    if i < maxid:
-                        drugnameShow += f'{id},'
-                        labels += f'{id}-'
-                    else:
-                        drugnameShow += f'{id}'
-                        labels += f'{id}'
-                writer.writerow([presname, drugname, labels])
-
-                drugname_boxes.append(box)
-                src_im = write_text(src_im, drugnameShow, (int(box[0][0]), int(box[0][1])))
-        src_im = utility.draw_text_det_img(drugname_boxes, src_im)
-
-        if det_visualize:
-            img_path = os.path.join(det_out_viz_dir, "{}".format(img_name_pure))
-            cv2.imwrite(img_path, src_im)
-            logger.info("The visualized image saved in {}".format(img_path))
+        src_im = imutils.resize(src_im, width=640)
+        cv2.imwrite(img_path, src_im)
 
         infer_time = time.time() - t1
         logger.info("Predict time of {}: {}".format(presname, infer_time))
 
+    #     src_show = imutils.resize(src_im, width=640)
+    #     cv2.imshow("pres", src_show)
+    #     if cv2.waitKey(0) == ord("q"):
+    #         break
+    # cv2.destroyAllWindows()
 
-        cv2.imshow("pres", src_im)
-        if cv2.waitKey(0) == ord("q"):
-            break
-    cv2.destroyAllWindows()
-
-    PresOutput.close()
+    # PresOutput.close()

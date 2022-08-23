@@ -186,7 +186,6 @@ def draw_text_det_img(dt_boxes, src_im,save_path=None):
 def draw_textbox_det_img(dt_boxes, src_im,save_path=None):
     result_txt_icdar=''
     for box in dt_boxes:
-        box = box[0]
         box = np.array(box).astype(np.int32).reshape(-1, 2)
         cv2.polylines(src_im, [box], True, color=(0, 255, 0), thickness=2)
         poly_str = ','.join(
